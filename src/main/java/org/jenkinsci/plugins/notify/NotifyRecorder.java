@@ -2,7 +2,9 @@ package org.jenkinsci.plugins.notify;
 
 import static org.apache.http.util.Args.notBlank;
 import static org.apache.http.util.Args.notNull;
+
 import com.google.common.io.Resources;
+
 import groovy.json.JsonSlurper;
 import groovy.text.SimpleTemplateEngine;
 import hudson.Extension;
@@ -16,7 +18,10 @@ import hudson.tasks.BuildStepMonitor;
 import hudson.tasks.Publisher;
 import hudson.tasks.Recorder;
 import hudson.util.FormValidation;
+import hudson.util.ListBoxModel;
+import hudson.util.ListBoxModel.Option;
 import jenkins.model.Jenkins;
+
 import org.apache.http.Consts;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
@@ -33,6 +38,7 @@ import org.kohsuke.stapler.QueryParameter;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
+
 import java.io.IOException;
 import java.net.URI;
 import java.net.URL;
@@ -52,6 +58,7 @@ public class NotifyRecorder extends Recorder
     private static final String     LINE                    = "\n---------------\n";
 
     @Nullable public  final     String        notifyUrl;
+    @Nullable public  final     String        notifyOn;
     @Nonnull  public  final     String        notifyTemplate;
     @Nonnull  private transient BuildListener listener;
 
@@ -85,8 +92,9 @@ public class NotifyRecorder extends Recorder
 
     @SuppressWarnings({ "ParameterHidesMemberVariable", "SuppressionAnnotation" })
     @DataBoundConstructor
-    public NotifyRecorder ( String notifyUrl, String notifyTemplate ) {
+    public NotifyRecorder ( String notifyUrl, String notifyOn, String notifyTemplate ) {
         this.notifyUrl      = TextUtils.isBlank( notifyUrl ) ? null : notifyUrl.trim();
+        this.notifyOn       = TextUtils.isBlank( notifyOn ) ? Result.SUCCESS.toString() : notifyOn.trim();
         this.notifyTemplate = ( TextUtils.isBlank( notifyTemplate ) ? DEFAULT_TEMPLATE : notifyTemplate ).trim();
     }
 
@@ -107,14 +115,23 @@ public class NotifyRecorder extends Recorder
     {
         this.listener              = notNull( listener, "Build listener" );
         boolean isIntermediateStep = build.getUrl().contains( "$" );
-        boolean isSuccessResult    = build.getResult().isBetterOrEqualTo( Result.SUCCESS );
+        boolean isNotifyableResult    = build.getResult().isBetterOrEqualTo( Result.fromString(notifyOn) );
 
-        if ( isIntermediateStep || TextUtils.isBlank ( notifyUrl ) || ( ! isSuccessResult )) { return true; }
+        if ( isIntermediateStep || TextUtils.isBlank ( notifyUrl ) ) {
+            listener.getLogger().println( String.format( "Skipping notify JSON as configured url is empty"));
+            return true;
+        }
+        if ( ! isNotifyableResult ) {
+            listener.getLogger().println( String.format( "Skipping notify JSON as build result level is configured to %s", notifyOn));
+            return true;
+        }
 
-        listener.getLogger().println( String.format( "Building notify JSON payload" ));
+        listener.getLogger().println( String.format( "Building notify JSON payload as build result level %s is matching notification level %s", build.getResult(), notifyOn ));
         String notifyJson = buildNotifyJson( build, build.getEnvironment( listener ));
 
         listener.getLogger().println( String.format( "Publishing notify JSON payload to %s", notifyUrl ));
+        listener.getLogger().println( String.format( "Using payload %s", notifyJson ));
+        
         // noinspection ConstantConditions
         sendNotifyRequest( notifyUrl, notifyJson );
         return true;
@@ -191,6 +208,11 @@ public class NotifyRecorder extends Recorder
     @Extension
     public static class DescriptorImpl extends BuildStepDescriptor<Publisher>
     {
+    	private String notifyOn;
+    	
+    	public DescriptorImpl() {
+			load();
+		}
         @Override
         public String getDisplayName ()
         {
@@ -203,12 +225,10 @@ public class NotifyRecorder extends Recorder
             return true;
         }
 
-
         public String getDefaultNotifyTemplate()
         {
             return DEFAULT_TEMPLATE;
         }
-
 
         public FormValidation doCheckNotifyUrl( @QueryParameter String notifyUrl ) {
 
@@ -239,6 +259,24 @@ public class NotifyRecorder extends Recorder
 
         public FormValidation doCheckNotifyTemplate( @QueryParameter String notifyTemplate ) {
             return FormValidation.ok();
+        }
+        
+        public FormValidation doCheckNotifyOn( @QueryParameter String notifyOn ) {
+            return FormValidation.ok();
+        }
+        
+        public ListBoxModel doFillNotifyOnItems() {
+            ListBoxModel items = new ListBoxModel();
+            items.add(createOption(Result.SUCCESS));
+            items.add(createOption(Result.UNSTABLE));
+            items.add(createOption(Result.FAILURE));
+            items.add(createOption(Result.NOT_BUILT));
+            items.add(createOption(Result.ABORTED));
+            return items;
+        }
+        
+        private Option createOption(Result result){
+            return new Option(result.toString(), result.toString(), notifyOn!=null && notifyOn.equals(result.toString()));
         }
     }
 }

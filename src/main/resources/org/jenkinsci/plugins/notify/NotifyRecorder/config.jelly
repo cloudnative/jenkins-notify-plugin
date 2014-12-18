@@ -10,6 +10,12 @@
            description  = "URL to send POST notifications">
     <f:textbox/>
   </f:entry>
+  
+  <f:entry title        = "Notify On"
+           field        = "notifyOn"
+           description  = "Down to which build result level the notification should be triggered?">
+    <f:select />
+  </f:entry>
 
   <f:entry title        = "Notify template"
            field        = "notifyTemplate"
